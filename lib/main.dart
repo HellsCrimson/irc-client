@@ -1066,6 +1066,17 @@ class _ChatScreenState extends State<ChatScreen> {
                       fontSize: 12,
                     ),
                   ),
+                if (isOutgoing)
+                  Text(
+                    message.nick == null || message.nick!.isEmpty
+                        ? 'Me:'
+                        : 'Me (${message.nick}):',
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 12,
+                    ),
+                  ),
               ],
             ),
             const SizedBox(height: 4),
