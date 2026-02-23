@@ -5,23 +5,86 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 void main() {
   runApp(const MainApp());
 }
 
-class MainApp extends StatelessWidget {
+class MainApp extends StatefulWidget {
   const MainApp({super.key});
+
+  @override
+  State<MainApp> createState() => _MainAppState();
+}
+
+class _MainAppState extends State<MainApp> {
+  ThemeMode _themeMode = ThemeMode.system;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadThemeMode();
+  }
+
+  Future<void> _loadThemeMode() async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    final String? mode = prefs.getString(_prefKeyThemeMode);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _themeMode = _parseThemeMode(mode);
+    });
+  }
+
+  ThemeMode _parseThemeMode(String? value) {
+    switch (value) {
+      case 'light':
+        return ThemeMode.light;
+      case 'dark':
+        return ThemeMode.dark;
+      default:
+        return ThemeMode.system;
+    }
+  }
+
+  Future<void> _updateThemeMode(ThemeMode mode) async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    final String stored = switch (mode) {
+      ThemeMode.light => 'light',
+      ThemeMode.dark => 'dark',
+      ThemeMode.system => 'system',
+    };
+    await prefs.setString(_prefKeyThemeMode, stored);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _themeMode = mode;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'IRC Client',
+      themeMode: _themeMode,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF0C4A6E)),
         useMaterial3: true,
       ),
-      home: const ChatScreen(),
+      darkTheme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF38BDF8),
+          brightness: Brightness.dark,
+        ),
+        useMaterial3: true,
+      ),
+      home: ChatScreen(
+        themeMode: _themeMode,
+        onThemeModeChanged: _updateThemeMode,
+      ),
     );
   }
 }
@@ -52,6 +115,7 @@ enum TlsMode {
 
 class ChatMessage {
   ChatMessage({
+    required this.id,
     required this.direction,
     required this.kind,
     required this.text,
@@ -61,6 +125,7 @@ class ChatMessage {
     this.imageUrls = const <String>[],
   });
 
+  final int id;
   final MessageDirection direction;
   final MessageKind kind;
   final String text;
@@ -91,8 +156,27 @@ class IrcLine {
   }
 }
 
+class _ImageParseResult {
+  const _ImageParseResult({
+    required this.urls,
+    required this.aliases,
+  });
+
+  final List<String> urls;
+  final Map<String, String> aliases;
+}
+
+const String _prefKeyThemeMode = 'theme_mode';
+
 class ChatScreen extends StatefulWidget {
-  const ChatScreen({super.key});
+  const ChatScreen({
+    super.key,
+    required this.themeMode,
+    required this.onThemeModeChanged,
+  });
+
+  final ThemeMode themeMode;
+  final ValueChanged<ThemeMode> onThemeModeChanged;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -141,6 +225,11 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _listRequestedManually = false;
   bool _registrationComplete = false;
   final List<String> _motdLines = <String>[];
+  int _nextMessageId = 0;
+  final Map<int, Set<String>> _loadedImageUrlsByMessageId =
+      <int, Set<String>>{};
+  final Map<int, Map<String, String>> _imageUrlAliasesByMessageId =
+      <int, Map<String, String>>{};
 
   @override
   void initState() {
@@ -447,11 +536,13 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!handled && _showRawMessages) {
         _addMessage(
           ChatMessage(
+            id: _nextMessageId++,
             direction: MessageDirection.incoming,
             kind: MessageKind.raw,
             text: line,
             timestamp: DateTime.now(),
           ),
+          channel: _statusChannel,
         );
       }
     }
@@ -480,16 +571,19 @@ class _ChatScreenState extends State<ChatScreen> {
           _channels.add(messageChannel);
         });
       }
+      final _ImageParseResult imageParsed = _extractImageUrls(message);
       _addMessage(
         ChatMessage(
+          id: _nextMessageId++,
           direction: MessageDirection.incoming,
           kind: MessageKind.chat,
           text: message,
-          imageUrls: _extractImageUrls(message),
+          imageUrls: imageParsed.urls,
           nick: senderNick ?? 'unknown',
           channel: messageChannel,
           timestamp: DateTime.now(),
         ),
+        imageAliases: imageParsed.aliases,
       );
       return true;
     }
@@ -698,6 +792,8 @@ class _ChatScreenState extends State<ChatScreen> {
     _listRequestedManually = false;
     _registrationComplete = false;
     _motdLines.clear();
+    _loadedImageUrlsByMessageId.clear();
+    _imageUrlAliasesByMessageId.clear();
     if (mounted) {
       setState(() {
         if (_status != ConnectionStatus.error) {
@@ -781,16 +877,19 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
     _sendRawLine('PRIVMSG $_currentChannel :$text');
+    final _ImageParseResult parsed = _extractImageUrls(text);
     _addMessage(
       ChatMessage(
+        id: _nextMessageId++,
         direction: MessageDirection.outgoing,
         kind: MessageKind.chat,
         text: text,
-        imageUrls: _extractImageUrls(text),
+        imageUrls: parsed.urls,
         nick: _nickController.text.trim(),
         channel: _currentChannel,
         timestamp: DateTime.now(),
       ),
+      imageAliases: parsed.aliases,
     );
     _messageController.clear();
   }
@@ -865,16 +964,19 @@ class _ChatScreenState extends State<ChatScreen> {
             _channels.add(target);
           });
         }
+        final _ImageParseResult parsed = _extractImageUrls(message);
         _addMessage(
           ChatMessage(
+            id: _nextMessageId++,
             direction: MessageDirection.outgoing,
             kind: MessageKind.chat,
             text: message,
-            imageUrls: _extractImageUrls(message),
+            imageUrls: parsed.urls,
             nick: _nickController.text.trim(),
             channel: target,
             timestamp: DateTime.now(),
           ),
+          imageAliases: parsed.aliases,
         );
         return true;
       case 'list':
@@ -903,6 +1005,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_showRawMessages) {
       _addMessage(
         ChatMessage(
+          id: _nextMessageId++,
           direction: MessageDirection.outgoing,
           kind: MessageKind.raw,
           text: line,
@@ -913,7 +1016,11 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  void _addMessage(ChatMessage message, {String? channel}) {
+  void _addMessage(
+    ChatMessage message, {
+    String? channel,
+    Map<String, String>? imageAliases,
+  }) {
     if (!mounted) {
       return;
     }
@@ -923,6 +1030,9 @@ class _ChatScreenState extends State<ChatScreen> {
       final List<ChatMessage> bucket =
           _channelMessages.putIfAbsent(targetChannel, () => <ChatMessage>[]);
       bucket.add(message);
+      if (imageAliases != null && imageAliases.isNotEmpty) {
+        _imageUrlAliasesByMessageId[message.id] = imageAliases;
+      }
     });
     _scrollToBottom();
   }
@@ -930,6 +1040,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void _addSystemMessage(String text, {String? channel}) {
     _addMessage(
       ChatMessage(
+        id: _nextMessageId++,
         direction: MessageDirection.incoming,
         kind: MessageKind.system,
         text: text,
@@ -993,14 +1104,15 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _buildMessageTile(ChatMessage message) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
     if (message.kind == MessageKind.system) {
       return Container(
         margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-          border: Border.all(color: const Color(0xFFCBD5F5)),
+          border: Border.all(color: scheme.outlineVariant),
           borderRadius: BorderRadius.circular(10),
-          color: const Color(0xFFF8FAFC),
+          color: scheme.surfaceContainerHighest,
         ),
         child: Text(
           message.text,
@@ -1013,7 +1125,7 @@ class _ChatScreenState extends State<ChatScreen> {
       return Container(
         margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        color: const Color(0xFFF1F5F9),
+        color: scheme.surfaceContainerHigh,
         child: Text(
           message.text,
           style: const TextStyle(
@@ -1025,12 +1137,14 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     final bool isOutgoing = message.direction == MessageDirection.outgoing;
-    final Color bubbleColor = isOutgoing
-        ? const Color(0xFF0C4A6E)
-        : const Color(0xFFE2E8F0);
-    final Color textColor = isOutgoing ? Colors.white : Colors.black87;
+    final Color bubbleColor =
+        isOutgoing ? scheme.primaryContainer : scheme.surfaceContainerHighest;
+    final Color textColor =
+        isOutgoing ? scheme.onPrimaryContainer : scheme.onSurface;
     final Alignment alignment =
         isOutgoing ? Alignment.centerRight : Alignment.centerLeft;
+    final String displayText =
+        _stripLoadedImageUrls(message.text, message.imageUrls, message.id);
 
     return Align(
       alignment: alignment,
@@ -1071,8 +1185,8 @@ class _ChatScreenState extends State<ChatScreen> {
                     message.nick == null || message.nick!.isEmpty
                         ? 'Me:'
                         : 'Me (${message.nick}):',
-                    style: const TextStyle(
-                      color: Colors.white70,
+                    style: TextStyle(
+                      color: textColor.withOpacity(0.7),
                       fontWeight: FontWeight.w600,
                       fontSize: 12,
                     ),
@@ -1081,7 +1195,7 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             const SizedBox(height: 4),
             Text(
-              message.text,
+              displayText,
               style: TextStyle(color: textColor, fontSize: 15),
               softWrap: true,
             ),
@@ -1097,12 +1211,31 @@ class _ChatScreenState extends State<ChatScreen> {
                       child: Image.network(
                         url,
                         fit: BoxFit.cover,
+                        loadingBuilder: (BuildContext context, Widget child,
+                            ImageChunkEvent? loadingProgress) {
+                          if (loadingProgress == null) {
+                            _markImageLoaded(message.id, url);
+                            return child;
+                          }
+                          return child;
+                        },
                         errorBuilder: (BuildContext context, Object error,
                             StackTrace? stackTrace) {
                           return Container(
                             color: const Color(0xFFE2E8F0),
                             padding: const EdgeInsets.all(8),
-                            child: const Text('Image failed to load.'),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: <Widget>[
+                                const Text('Image failed to load.'),
+                                const SizedBox(height: 6),
+                                TextButton(
+                                  onPressed: () => _openUrlExternal(url),
+                                  child: const Text('Open in browser'),
+                                ),
+                              ],
+                            ),
                           );
                         },
                       ),
@@ -1157,6 +1290,48 @@ class _ChatScreenState extends State<ChatScreen> {
     return hash;
   }
 
+  void _markImageLoaded(int messageId, String url) {
+    final Set<String> loaded =
+        _loadedImageUrlsByMessageId.putIfAbsent(messageId, () => <String>{});
+    if (loaded.contains(url)) {
+      return;
+    }
+    setState(() {
+      loaded.add(url);
+      final Map<String, String>? aliases =
+          _imageUrlAliasesByMessageId[messageId];
+      if (aliases != null && aliases.containsKey(url)) {
+        loaded.add(aliases[url]!);
+      }
+    });
+  }
+
+  String _stripLoadedImageUrls(
+    String text,
+    List<String> urls,
+    int messageId,
+  ) {
+    if (urls.isEmpty) {
+      return text;
+    }
+    final Set<String> loaded =
+        _loadedImageUrlsByMessageId[messageId] ?? <String>{};
+    if (loaded.isEmpty) {
+      return text;
+    }
+    String result = text;
+    for (final String url in urls) {
+      if (loaded.contains(url)) {
+        result = result.replaceAll(url, '');
+      }
+    }
+    for (final String alias in loaded) {
+      result = result.replaceAll(alias, '');
+    }
+    result = result.replaceAll(RegExp(r'\s{2,}'), ' ').trim();
+    return result;
+  }
+
   bool _isChannel(String target) {
     return target.startsWith('#') || target.startsWith('&');
   }
@@ -1207,16 +1382,99 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  List<String> _extractImageUrls(String text) {
-    final RegExp regex = RegExp(
-      r'(https?:\/\/[^\s]+?\.(?:png|jpe?g|gif|webp))',
+  Future<void> _openUrlExternal(String url) async {
+    final Uri? uri = Uri.tryParse(url);
+    if (uri == null) {
+      _showError('Invalid URL.');
+      return;
+    }
+    final bool launched = await launchUrl(
+      uri,
+      mode: LaunchMode.externalApplication,
+    );
+    if (!launched) {
+      _showError('Unable to open URL.');
+    }
+  }
+
+  _ImageParseResult _extractImageUrls(String text) {
+    final RegExp urlRegex = RegExp(
+      r'(https?:\/\/[^\s]+)',
       caseSensitive: false,
     );
-    return regex
-        .allMatches(text)
-        .map((RegExpMatch match) => match.group(1))
-        .whereType<String>()
-        .toList();
+    final List<String> urls = <String>[];
+    final Map<String, String> aliases = <String, String>{};
+
+    for (final RegExpMatch match in urlRegex.allMatches(text)) {
+      final String? raw = match.group(1);
+      if (raw == null) {
+        continue;
+      }
+      final String? resolved = _resolveImageUrl(raw);
+      if (resolved == null) {
+        continue;
+      }
+      urls.add(resolved);
+      if (resolved != raw) {
+        aliases[resolved] = raw;
+      }
+    }
+
+    return _ImageParseResult(urls: urls, aliases: aliases);
+  }
+
+  String? _resolveImageUrl(String url) {
+    final Uri? uri = Uri.tryParse(url);
+    if (uri == null) {
+      return null;
+    }
+    final String lowerPath = uri.path.toLowerCase();
+    final bool isImageExtension = lowerPath.endsWith('.png') ||
+        lowerPath.endsWith('.jpg') ||
+        lowerPath.endsWith('.jpeg') ||
+        lowerPath.endsWith('.gif') ||
+        lowerPath.endsWith('.webp');
+    if (isImageExtension) {
+      return url;
+    }
+    if (lowerPath.endsWith('.gifv')) {
+      return url.replaceFirst('.gifv', '.gif');
+    }
+    if (uri.host.contains('giphy.com')) {
+      if (lowerPath.contains('/media/') && lowerPath.endsWith('/giphy.gif')) {
+        return url;
+      }
+      if (uri.pathSegments.isNotEmpty) {
+        String id = uri.pathSegments.last;
+        if (id.contains('-')) {
+          id = id.split('-').last;
+        }
+        if (id.isNotEmpty) {
+          return 'https://media.giphy.com/media/$id/giphy.gif';
+        }
+      }
+    }
+    if (uri.host.contains('tenor.com')) {
+      if (uri.host.startsWith('media.tenor.com') &&
+          lowerPath.endsWith('.gif')) {
+        return url;
+      }
+      if (uri.pathSegments.isNotEmpty) {
+        final String last = uri.pathSegments.last;
+        final String id = last.contains('-') ? last.split('-').last : last;
+        if (id.isNotEmpty) {
+          return 'https://media.tenor.com/$id/tenor.gif';
+        }
+      }
+    }
+    if (uri.host.contains('discordapp.com') ||
+        uri.host.contains('discord.com') ||
+        uri.host.contains('discordapp.net')) {
+      if (isImageExtension) {
+        return url;
+      }
+    }
+    return null;
   }
 
   @override
@@ -1277,7 +1535,7 @@ class _ChatScreenState extends State<ChatScreen> {
         Container(
           width: double.infinity,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          color: const Color(0xFFE2E8F0),
+          color: Theme.of(context).colorScheme.surfaceContainerHigh,
           child: Row(
             children: <Widget>[
               Container(
@@ -1296,7 +1554,7 @@ class _ChatScreenState extends State<ChatScreen> {
         Container(
           width: double.infinity,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          color: const Color(0xFFF8FAFC),
+          color: Theme.of(context).colorScheme.surfaceContainer,
           child: Row(
             children: <Widget>[
               const Text('Channel:'),
@@ -1554,6 +1812,35 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
         Row(
           children: <Widget>[
+            const Text('Theme:'),
+            const SizedBox(width: 12),
+            DropdownButton<ThemeMode>(
+              value: widget.themeMode,
+              onChanged: (ThemeMode? value) {
+                if (value == null) {
+                  return;
+                }
+                widget.onThemeModeChanged(value);
+              },
+              items: const <DropdownMenuItem<ThemeMode>>[
+                DropdownMenuItem(
+                  value: ThemeMode.system,
+                  child: Text('System'),
+                ),
+                DropdownMenuItem(
+                  value: ThemeMode.light,
+                  child: Text('Light'),
+                ),
+                DropdownMenuItem(
+                  value: ThemeMode.dark,
+                  child: Text('Dark'),
+                ),
+              ],
+            ),
+          ],
+        ),
+        Row(
+          children: <Widget>[
             Switch(
               value: _autoConnect,
               onChanged: (bool value) {
@@ -1572,7 +1859,7 @@ class _ChatScreenState extends State<ChatScreen> {
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(8),
-              color: const Color(0xFFF1F5F9),
+              color: Theme.of(context).colorScheme.surfaceContainerHigh,
               child: Text(
                 _debugLines.isEmpty
                     ? 'No debug output yet.'
