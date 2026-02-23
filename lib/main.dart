@@ -99,6 +99,7 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
+  static const String _statusChannel = '_status';
   static const _prefKeyIp = 'last_ip';
   static const _prefKeyPort = 'last_port';
   static const _prefKeyUseTls = 'use_tls';
@@ -107,6 +108,7 @@ class _ChatScreenState extends State<ChatScreen> {
   static const _prefKeyNick = 'nick';
   static const _prefKeyUser = 'user';
   static const _prefKeyRealname = 'realname';
+  static const _prefKeyAutoConnect = 'auto_connect';
   static const _connectTimeout = Duration(seconds: 5);
 
   final TextEditingController _ipController = TextEditingController();
@@ -119,7 +121,6 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _realnameController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
 
-  final List<ChatMessage> _messages = <ChatMessage>[];
   final List<String> _debugLines = <String>[];
 
   ConnectionStatus _status = ConnectionStatus.disconnected;
@@ -133,6 +134,11 @@ class _ChatScreenState extends State<ChatScreen> {
   String _currentChannel = '';
   final List<String> _channels = <String>[];
   bool _showRawMessages = false;
+  bool _autoConnect = false;
+  final Map<String, List<ChatMessage>> _channelMessages =
+      <String, List<ChatMessage>>{};
+  final Set<String> _joinedChannels = <String>{};
+  bool _listRequestedManually = false;
 
   @override
   void initState() {
@@ -164,6 +170,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final String? nick = prefs.getString(_prefKeyNick);
     final String? user = prefs.getString(_prefKeyUser);
     final String? realname = prefs.getString(_prefKeyRealname);
+    final bool? autoConnect = prefs.getBool(_prefKeyAutoConnect);
     if (!mounted) {
       return;
     }
@@ -192,7 +199,18 @@ class _ChatScreenState extends State<ChatScreen> {
       if (realname != null) {
         _realnameController.text = realname;
       }
+      if (autoConnect != null) {
+        _autoConnect = autoConnect;
+      }
     });
+
+    if (_autoConnect && _canAutoConnect()) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_status == ConnectionStatus.disconnected) {
+          _connect();
+        }
+      });
+    }
   }
 
   Future<void> _savePreferences(String ip, int port) async {
@@ -208,6 +226,24 @@ class _ChatScreenState extends State<ChatScreen> {
     await prefs.setString(_prefKeyNick, _nickController.text.trim());
     await prefs.setString(_prefKeyUser, _userController.text.trim());
     await prefs.setString(_prefKeyRealname, _realnameController.text.trim());
+    await prefs.setBool(_prefKeyAutoConnect, _autoConnect);
+  }
+
+  bool _canAutoConnect() {
+    final String ip = _ipController.text.trim();
+    final int? port = int.tryParse(_portController.text.trim());
+    final String nick = _nickController.text.trim();
+    final String user = _userController.text.trim();
+    if (ip.isEmpty || port == null || port < 1 || port > 65535) {
+      return false;
+    }
+    if (nick.isEmpty || user.isEmpty) {
+      return false;
+    }
+    if (_useTls && _tlsMode == TlsMode.fingerprint) {
+      return _normalizedFingerprint().length == 40;
+    }
+    return true;
   }
 
   void _showError(String message) {
@@ -434,6 +470,14 @@ class _ChatScreenState extends State<ChatScreen> {
       if (message == null) {
         return false;
       }
+      final String messageChannel = _isChannel(target)
+          ? target
+          : (senderNick ?? target);
+      if (!_channels.contains(messageChannel)) {
+        setState(() {
+          _channels.add(messageChannel);
+        });
+      }
       _addMessage(
         ChatMessage(
           direction: MessageDirection.incoming,
@@ -441,7 +485,7 @@ class _ChatScreenState extends State<ChatScreen> {
           text: message,
           imageUrls: _extractImageUrls(message),
           nick: senderNick ?? 'unknown',
-          channel: target,
+          channel: messageChannel,
           timestamp: DateTime.now(),
         ),
       );
@@ -449,11 +493,20 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     if (command == 'NOTICE' && parsed.params.isNotEmpty) {
+      final String target = parsed.params.first;
       final String? message = parsed.trailing;
       if (message == null) {
         return false;
       }
-      _addSystemMessage('Notice from ${senderNick ?? 'server'}: $message');
+      if (_isChannel(target) && !_channels.contains(target)) {
+        setState(() {
+          _channels.add(target);
+        });
+      }
+      _addSystemMessage(
+        'Notice from ${senderNick ?? 'server'}: $message',
+        channel: _isChannel(target) ? target : _statusChannel,
+      );
       return true;
     }
 
@@ -470,24 +523,22 @@ class _ChatScreenState extends State<ChatScreen> {
           }
           _currentChannel = channel;
         });
+        _joinedChannels.add(channel);
         _addDebug('Auto-joined channel $channel');
       }
-      _addSystemMessage('${senderNick ?? 'Someone'} joined $channel');
+      _addSystemMessage('${senderNick ?? 'Someone'} joined $channel',
+          channel: channel);
       return true;
     }
 
     if (command == 'PART' && parsed.params.isNotEmpty) {
       final String channel = parsed.params.first;
       if (senderNick == nick) {
-        setState(() {
-          _channels.remove(channel);
-          if (_currentChannel == channel) {
-            _currentChannel = _channels.isNotEmpty ? _channels.first : '';
-          }
-        });
+        _joinedChannels.remove(channel);
         _addDebug('Auto-parted channel $channel');
       }
-      _addSystemMessage('${senderNick ?? 'Someone'} left $channel');
+      _addSystemMessage('${senderNick ?? 'Someone'} left $channel',
+          channel: channel);
       return true;
     }
 
@@ -516,6 +567,10 @@ class _ChatScreenState extends State<ChatScreen> {
       final String reason = parsed.trailing ?? 'Server error';
       _addSystemMessage('Server error: $reason');
       return true;
+    }
+
+    if (RegExp(r'^\d{3}$').hasMatch(command)) {
+      return _handleNumeric(command, parsed);
     }
 
     return false;
@@ -556,6 +611,41 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  bool _handleNumeric(String code, IrcLine parsed) {
+    if (code == '321') {
+      setState(() {
+        _channels
+          ..clear()
+          ..addAll(_joinedChannels);
+      });
+      _addDebug('Channel list start.');
+      return true;
+    }
+
+    if (code == '322') {
+      if (parsed.params.length >= 2) {
+        final String channel = parsed.params[1];
+        if (channel.isNotEmpty && !_channels.contains(channel)) {
+          setState(() {
+            _channels.add(channel);
+          });
+        }
+        return true;
+      }
+    }
+
+    if (code == '323') {
+      if (_listRequestedManually) {
+        _addSystemMessage('Channel list updated (${_channels.length}).');
+        _listRequestedManually = false;
+      }
+      _addDebug('Channel list end.');
+      return true;
+    }
+
+    return false;
+  }
+
   void _handleSocketError(String message) {
     _setStatus(ConnectionStatus.error, reason: message);
     _addSystemMessage(message);
@@ -575,6 +665,9 @@ class _ChatScreenState extends State<ChatScreen> {
     _incomingBuffer = '';
     _channels.clear();
     _currentChannel = '';
+    _channelMessages.clear();
+    _joinedChannels.clear();
+    _listRequestedManually = false;
     if (mounted) {
       setState(() {
         if (_status != ConnectionStatus.error) {
@@ -607,6 +700,28 @@ class _ChatScreenState extends State<ChatScreen> {
             : _realnameController.text.trim();
     _sendRawLine('NICK $nick');
     _sendRawLine('USER $user 0 * :$realname');
+    _requestChannelList(auto: true);
+  }
+
+  void _requestChannelList({required bool auto}) {
+    if (_status != ConnectionStatus.connected || _socket == null) {
+      if (!auto) {
+        _showError('Not connected.');
+      }
+      return;
+    }
+    _listRequestedManually = !auto;
+    setState(() {
+      _channels
+        ..clear()
+        ..addAll(_joinedChannels);
+    });
+    _sendRawLine('LIST');
+    if (auto) {
+      _addDebug('Requested channel list (auto).');
+    } else {
+      _addSystemMessage('Requested channel list.');
+    }
   }
 
   void _sendMessage() {
@@ -624,8 +739,12 @@ class _ChatScreenState extends State<ChatScreen> {
         return;
       }
     }
-    if (_currentChannel.isEmpty) {
+    if (_currentChannel.isEmpty || _currentChannel == _statusChannel) {
       _showError('Join a channel first (use /join).');
+      return;
+    }
+    if (!_joinedChannels.contains(_currentChannel)) {
+      _showError('You are not in $_currentChannel yet.');
       return;
     }
     _sendRawLine('PRIVMSG $_currentChannel :$text');
@@ -680,7 +799,8 @@ class _ChatScreenState extends State<ChatScreen> {
           }
           _currentChannel = channel;
         });
-        _addSystemMessage('Joining $channel');
+        _joinedChannels.add(channel);
+        _addSystemMessage('Joining $channel', channel: channel);
         _addDebug('Current channel set to $_currentChannel');
         return true;
       case 'part':
@@ -690,13 +810,8 @@ class _ChatScreenState extends State<ChatScreen> {
         }
         final String channel = args.split(RegExp(r'\s+')).first;
         _sendRawLine('PART $channel');
-        setState(() {
-          _channels.remove(channel);
-          if (_currentChannel == channel) {
-            _currentChannel = _channels.isNotEmpty ? _channels.first : '';
-          }
-        });
-        _addSystemMessage('Leaving $channel');
+        _joinedChannels.remove(channel);
+        _addSystemMessage('Leaving $channel', channel: channel);
         _addDebug('Parted channel $channel');
         return true;
       case 'msg':
@@ -712,6 +827,11 @@ class _ChatScreenState extends State<ChatScreen> {
         final String target = msgParts.first;
         final String message = args.substring(target.length).trim();
         _sendRawLine('PRIVMSG $target :$message');
+        if (!_channels.contains(target)) {
+          setState(() {
+            _channels.add(target);
+          });
+        }
         _addMessage(
           ChatMessage(
             direction: MessageDirection.outgoing,
@@ -723,6 +843,9 @@ class _ChatScreenState extends State<ChatScreen> {
             timestamp: DateTime.now(),
           ),
         );
+        return true;
+      case 'list':
+        _requestChannelList(auto: false);
         return true;
       case 'user':
         if (args.isEmpty) {
@@ -752,21 +875,26 @@ class _ChatScreenState extends State<ChatScreen> {
           text: line,
           timestamp: DateTime.now(),
         ),
+        channel: _statusChannel,
       );
     }
   }
 
-  void _addMessage(ChatMessage message) {
+  void _addMessage(ChatMessage message, {String? channel}) {
     if (!mounted) {
       return;
     }
+    final String targetChannel =
+        channel ?? message.channel ?? _statusChannel;
     setState(() {
-      _messages.add(message);
+      final List<ChatMessage> bucket =
+          _channelMessages.putIfAbsent(targetChannel, () => <ChatMessage>[]);
+      bucket.add(message);
     });
     _scrollToBottom();
   }
 
-  void _addSystemMessage(String text) {
+  void _addSystemMessage(String text, {String? channel}) {
     _addMessage(
       ChatMessage(
         direction: MessageDirection.incoming,
@@ -774,6 +902,7 @@ class _ChatScreenState extends State<ChatScreen> {
         text: text,
         timestamp: DateTime.now(),
       ),
+      channel: channel ?? _statusChannel,
     );
   }
 
@@ -984,6 +1113,10 @@ class _ChatScreenState extends State<ChatScreen> {
     return hash;
   }
 
+  bool _isChannel(String target) {
+    return target.startsWith('#') || target.startsWith('&');
+  }
+
   void _openImageViewer(String url) {
     if (!mounted) {
       return;
@@ -1084,6 +1217,17 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _buildChatPage(bool isConnected) {
+    String activeChannel =
+        _currentChannel.isEmpty ? _statusChannel : _currentChannel;
+    final List<String> channelOptions = <String>[
+      _statusChannel,
+      ..._channels,
+    ];
+    if (!channelOptions.contains(activeChannel)) {
+      activeChannel = _statusChannel;
+    }
+    final List<ChatMessage> visibleMessages =
+        _channelMessages[activeChannel] ?? <ChatMessage>[];
     return Column(
       children: <Widget>[
         Container(
@@ -1114,12 +1258,11 @@ class _ChatScreenState extends State<ChatScreen> {
               const Text('Channel:'),
               const SizedBox(width: 8),
               if (_channels.isEmpty)
-                const Text('None (use /join)'),
+                const Text('Status'),
               if (_channels.isNotEmpty)
                 Expanded(
                   child: DropdownButton<String>(
-                    value:
-                        _currentChannel.isEmpty ? _channels.first : _currentChannel,
+                    value: activeChannel,
                     isExpanded: true,
                     onChanged: (String? value) {
                       if (value == null) {
@@ -1128,12 +1271,21 @@ class _ChatScreenState extends State<ChatScreen> {
                       setState(() {
                         _currentChannel = value;
                       });
+                      _scrollToBottom();
+                      if (value != _statusChannel &&
+                          !_joinedChannels.contains(value)) {
+                        _sendRawLine('JOIN $value');
+                        _joinedChannels.add(value);
+                        _addSystemMessage('Joining $value', channel: value);
+                      }
                     },
-                    items: _channels
+                    items: channelOptions
                         .map(
                           (String channel) => DropdownMenuItem<String>(
                             value: channel,
-                            child: Text(channel),
+                            child: Text(
+                              channel == _statusChannel ? 'Status' : channel,
+                            ),
                           ),
                         )
                         .toList(),
@@ -1144,13 +1296,13 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
         const Divider(height: 1),
         Expanded(
-          child: _messages.isEmpty
+          child: visibleMessages.isEmpty
               ? const Center(child: Text('No messages yet.'))
               : ListView.builder(
                   controller: _scrollController,
-                  itemCount: _messages.length,
+                  itemCount: visibleMessages.length,
                   itemBuilder: (BuildContext context, int index) {
-                    return _buildMessageTile(_messages[index]);
+                    return _buildMessageTile(visibleMessages[index]);
                   },
                 ),
         ),
@@ -1354,6 +1506,19 @@ class _ChatScreenState extends State<ChatScreen> {
               },
             ),
             const Text('Show raw messages'),
+          ],
+        ),
+        Row(
+          children: <Widget>[
+            Switch(
+              value: _autoConnect,
+              onChanged: (bool value) {
+                setState(() {
+                  _autoConnect = value;
+                });
+              },
+            ),
+            const Text('Auto-connect on launch'),
           ],
         ),
         ExpansionTile(
