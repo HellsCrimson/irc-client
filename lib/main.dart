@@ -139,6 +139,8 @@ class _ChatScreenState extends State<ChatScreen> {
       <String, List<ChatMessage>>{};
   final Set<String> _joinedChannels = <String>{};
   bool _listRequestedManually = false;
+  bool _registrationComplete = false;
+  final List<String> _motdLines = <String>[];
 
   @override
   void initState() {
@@ -612,6 +614,14 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   bool _handleNumeric(String code, IrcLine parsed) {
+    if (code == '001') {
+      _registrationComplete = true;
+      if (_autoConnect) {
+        _requestChannelList(auto: true);
+      }
+      return true;
+    }
+
     if (code == '321') {
       setState(() {
         _channels
@@ -643,6 +653,24 @@ class _ChatScreenState extends State<ChatScreen> {
       return true;
     }
 
+    if (code == '372') {
+      if (parsed.trailing != null && parsed.trailing!.isNotEmpty) {
+        _motdLines.add(parsed.trailing!);
+      }
+      return true;
+    }
+
+    if (code == '376' || code == '422') {
+      if (_motdLines.isNotEmpty) {
+        _addSystemMessage(
+          'MOTD:\n${_motdLines.join('\n')}',
+          channel: _statusChannel,
+        );
+        _motdLines.clear();
+      }
+      return true;
+    }
+
     return false;
   }
 
@@ -668,6 +696,8 @@ class _ChatScreenState extends State<ChatScreen> {
     _channelMessages.clear();
     _joinedChannels.clear();
     _listRequestedManually = false;
+    _registrationComplete = false;
+    _motdLines.clear();
     if (mounted) {
       setState(() {
         if (_status != ConnectionStatus.error) {
@@ -700,7 +730,6 @@ class _ChatScreenState extends State<ChatScreen> {
             : _realnameController.text.trim();
     _sendRawLine('NICK $nick');
     _sendRawLine('USER $user 0 * :$realname');
-    _requestChannelList(auto: true);
   }
 
   void _requestChannelList({required bool auto}) {
@@ -708,6 +737,10 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!auto) {
         _showError('Not connected.');
       }
+      return;
+    }
+    if (auto && !_registrationComplete) {
+      _addDebug('Deferring channel list until registration completes.');
       return;
     }
     _listRequestedManually = !auto;
