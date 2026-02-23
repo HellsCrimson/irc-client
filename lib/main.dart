@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -182,7 +183,7 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   static const String _statusChannel = '_status';
   static const _prefKeyIp = 'last_ip';
   static const _prefKeyPort = 'last_port';
@@ -230,16 +231,24 @@ class _ChatScreenState extends State<ChatScreen> {
       <int, Set<String>>{};
   final Map<int, Map<String, String>> _imageUrlAliasesByMessageId =
       <int, Map<String, String>>{};
+  bool _wasConnectedBeforeBackground = false;
+  final FlutterLocalNotificationsPlugin _notificationsPlugin =
+      FlutterLocalNotificationsPlugin();
+  bool _notificationsReady = false;
+  bool _manualDisconnectInProgress = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadPreferences();
+    _initNotifications();
   }
 
   @override
   void dispose() {
-    _disconnect();
+    WidgetsBinding.instance.removeObserver(this);
+    _disconnect(manual: true);
     _ipController.dispose();
     _portController.dispose();
     _messageController.dispose();
@@ -249,6 +258,29 @@ class _ChatScreenState extends State<ChatScreen> {
     _realnameController.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      _wasConnectedBeforeBackground =
+          _status == ConnectionStatus.connected && _socket != null;
+      if (_wasConnectedBeforeBackground) {
+        _addSystemMessage('App backgrounded. Connection may drop.',
+            channel: _statusChannel);
+      }
+    }
+
+    if (state == AppLifecycleState.resumed) {
+      if (_wasConnectedBeforeBackground &&
+          _status != ConnectionStatus.connected) {
+        _addSystemMessage('Reconnecting after background...',
+            channel: _statusChannel);
+        _connect();
+      }
+      _wasConnectedBeforeBackground = false;
+    }
   }
 
   Future<void> _loadPreferences() async {
@@ -302,6 +334,44 @@ class _ChatScreenState extends State<ChatScreen> {
         }
       });
     }
+  }
+
+  Future<void> _initNotifications() async {
+    const AndroidInitializationSettings androidSettings =
+        AndroidInitializationSettings('@mipmap/ic_launcher');
+    const DarwinInitializationSettings iosSettings =
+        DarwinInitializationSettings(
+      requestAlertPermission: true,
+      requestBadgePermission: true,
+      requestSoundPermission: true,
+    );
+    const InitializationSettings initSettings =
+        InitializationSettings(android: androidSettings, iOS: iosSettings);
+
+    await _notificationsPlugin.initialize(initSettings);
+    _notificationsReady = true;
+  }
+
+  Future<void> _notifyConnectionLost({String? reason}) async {
+    if (!_notificationsReady) {
+      return;
+    }
+    const AndroidNotificationDetails androidDetails =
+        AndroidNotificationDetails(
+      'connection',
+      'Connection',
+      importance: Importance.high,
+      priority: Priority.high,
+    );
+    const DarwinNotificationDetails iosDetails = DarwinNotificationDetails();
+    const NotificationDetails details =
+        NotificationDetails(android: androidDetails, iOS: iosDetails);
+    await _notificationsPlugin.show(
+      1,
+      'Connection lost',
+      reason ?? 'Disconnected from server.',
+      details,
+    );
   }
 
   Future<void> _savePreferences(String ip, int port) async {
@@ -505,6 +575,9 @@ class _ChatScreenState extends State<ChatScreen> {
         _addDebug('Socket closed by remote.');
         _setStatus(ConnectionStatus.disconnected, reason: 'remote closed');
         _addSystemMessage('Disconnected.');
+        if (!_manualDisconnectInProgress) {
+          _notifyConnectionLost(reason: 'Server closed the connection.');
+        }
       },
       cancelOnError: true,
     );
@@ -773,10 +846,16 @@ class _ChatScreenState extends State<ChatScreen> {
     _addSystemMessage(message);
     _showError(message);
     _addDebug(message);
+    if (!_manualDisconnectInProgress) {
+      _notifyConnectionLost(reason: message);
+    }
     _disconnect();
   }
 
-  void _disconnect() {
+  void _disconnect({bool manual = false}) {
+    if (manual) {
+      _manualDisconnectInProgress = true;
+    }
     if (_socket != null) {
       _addDebug('Disconnect requested.');
     }
@@ -800,6 +879,9 @@ class _ChatScreenState extends State<ChatScreen> {
           _status = ConnectionStatus.disconnected;
         }
       });
+    }
+    if (manual) {
+      _manualDisconnectInProgress = false;
     }
   }
 
@@ -1677,8 +1759,11 @@ class _ChatScreenState extends State<ChatScreen> {
           children: <Widget>[
             Expanded(
               child: ElevatedButton(
-                onPressed:
-                    isConnecting ? null : (isConnected ? _disconnect : _connect),
+                onPressed: isConnecting
+                    ? null
+                    : (isConnected
+                        ? () => _disconnect(manual: true)
+                        : _connect),
                 child: Text(isConnected ? 'Disconnect' : 'Connect'),
               ),
             ),
