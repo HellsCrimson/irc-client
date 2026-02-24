@@ -65,19 +65,106 @@ class _MainAppState extends State<MainApp> {
 
   @override
   Widget build(BuildContext context) {
+    const Color seedColor = Color(0xFF1E3A8A);
     return MaterialApp(
       title: 'IRC Client',
       themeMode: _themeMode,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF0C4A6E)),
-        useMaterial3: true,
-      ),
-      darkTheme: ThemeData(
+        fontFamily: 'SF Pro Text',
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF38BDF8),
-          brightness: Brightness.dark,
+          seedColor: seedColor,
+          surface: const Color(0xFFF5F7FB),
         ),
         useMaterial3: true,
+        scaffoldBackgroundColor: const Color(0xFFF5F7FB),
+        appBarTheme: const AppBarTheme(
+          centerTitle: true,
+          elevation: 0,
+          backgroundColor: Colors.transparent,
+          surfaceTintColor: Colors.transparent,
+          titleTextStyle: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w600,
+            color: Color(0xFF0B1B2B),
+          ),
+        ),
+        cardTheme: CardThemeData(
+          elevation: 0,
+          color: const Color(0xFFFDFEFF),
+          surfaceTintColor: Colors.transparent,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: const Color(0xFFF0F3F9),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: BorderSide.none,
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: Color(0xFF60A5FA)),
+          ),
+          labelStyle: const TextStyle(
+            color: Color(0xFF4B5563),
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        dividerTheme: const DividerThemeData(
+          thickness: 0.8,
+          color: Color(0xFFE2E8F0),
+        ),
+      ),
+      darkTheme: ThemeData(
+        fontFamily: 'SF Pro Text',
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF60A5FA),
+          brightness: Brightness.dark,
+          surface: const Color(0xFF0B1220),
+        ),
+        useMaterial3: true,
+        scaffoldBackgroundColor: const Color(0xFF0B1220),
+        appBarTheme: const AppBarTheme(
+          centerTitle: true,
+          elevation: 0,
+          backgroundColor: Colors.transparent,
+          surfaceTintColor: Colors.transparent,
+          titleTextStyle: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w600,
+            color: Color(0xFFE2E8F0),
+          ),
+        ),
+        cardTheme: CardThemeData(
+          elevation: 0,
+          color: const Color(0xFF0F172A),
+          surfaceTintColor: Colors.transparent,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: const Color(0xFF111827),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: BorderSide.none,
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: Color(0xFF60A5FA)),
+          ),
+          labelStyle: const TextStyle(
+            color: Color(0xFF94A3B8),
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        dividerTheme: const DividerThemeData(
+          thickness: 0.8,
+          color: Color(0xFF1F2937),
+        ),
       ),
       home: ChatScreen(
         themeMode: _themeMode,

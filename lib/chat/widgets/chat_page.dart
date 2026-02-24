@@ -46,58 +46,90 @@ class ChatPage extends StatelessWidget {
 
     return Column(
       children: <Widget>[
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          color: Theme.of(context).colorScheme.surfaceContainerHigh,
-          child: Row(
-            children: <Widget>[
-              Container(
-                width: 10,
-                height: 10,
-                decoration: BoxDecoration(
-                  color: statusColor,
-                  shape: BoxShape.circle,
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: Theme.of(context).cardColor.withOpacity(0.92),
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: <BoxShadow>[
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.06),
+                  blurRadius: 12,
+                  offset: const Offset(0, 6),
                 ),
-              ),
-              const SizedBox(width: 8),
-              Text(statusLabel),
-            ],
-          ),
-        ),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          color: Theme.of(context).colorScheme.surfaceContainer,
-          child: Row(
-            children: <Widget>[
-              const Text('Channel:'),
-              const SizedBox(width: 8),
-              if (channels.isEmpty) const Text('Status'),
-              if (channels.isNotEmpty)
-                Expanded(
-                  child: DropdownButton<String>(
-                    value: activeChannel,
-                    isExpanded: true,
-                    onChanged: (String? value) {
-                      if (value == null) {
-                        return;
-                      }
-                      onChannelSelected(value);
-                    },
-                    items: channelOptions
-                        .map(
-                          (String channel) => DropdownMenuItem<String>(
-                            value: channel,
-                            child: Text(
-                              channel == statusChannel ? 'Status' : channel,
-                            ),
-                          ),
-                        )
-                        .toList(),
+              ],
+            ),
+            child: Row(
+              children: <Widget>[
+                Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: statusColor,
+                    shape: BoxShape.circle,
                   ),
                 ),
-            ],
+                const SizedBox(width: 8),
+                Text(
+                  statusLabel,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const Spacer(),
+                Icon(
+                  Icons.wifi_tethering_rounded,
+                  size: 16,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ],
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: Theme.of(context).cardColor.withOpacity(0.9),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Row(
+              children: <Widget>[
+                const Text(
+                  'Channel',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(width: 10),
+                if (channels.isEmpty)
+                  const Text('Status'),
+                if (channels.isNotEmpty)
+                  Expanded(
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        value: activeChannel,
+                        isExpanded: true,
+                        onChanged: (String? value) {
+                          if (value == null) {
+                            return;
+                          }
+                          onChannelSelected(value);
+                        },
+                        items: channelOptions
+                            .map(
+                              (String channel) => DropdownMenuItem<String>(
+                                value: channel,
+                                child: Text(
+                                  channel == statusChannel ? 'Status' : channel,
+                                ),
+                              ),
+                            )
+                            .toList(),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
         const Divider(height: 1),
@@ -114,7 +146,7 @@ class ChatPage extends StatelessWidget {
         ),
         const Divider(height: 1),
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
           child: Row(
             children: <Widget>[
               Expanded(

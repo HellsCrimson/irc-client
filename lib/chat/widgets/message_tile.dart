@@ -23,18 +23,23 @@ class MessageTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
+    final double maxBubbleWidth =
+        (MediaQuery.of(context).size.width * 0.72).clamp(240, 360).toDouble();
     if (message.kind == MessageKind.system) {
       return Container(
         margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
           border: Border.all(color: scheme.outlineVariant),
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(14),
           color: scheme.surfaceContainerHighest,
         ),
         child: Text(
           message.text,
-          style: const TextStyle(fontStyle: FontStyle.italic),
+          style: TextStyle(
+            fontStyle: FontStyle.italic,
+            color: scheme.onSurface.withOpacity(0.7),
+          ),
         ),
       );
     }
@@ -43,7 +48,10 @@ class MessageTile extends StatelessWidget {
       return Container(
         margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        color: scheme.surfaceContainerHigh,
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(12),
+        ),
         child: Text(
           message.text,
           style: const TextStyle(
@@ -55,10 +63,12 @@ class MessageTile extends StatelessWidget {
     }
 
     final bool isOutgoing = message.direction == MessageDirection.outgoing;
-    final Color bubbleColor =
-        isOutgoing ? scheme.primaryContainer : scheme.surfaceContainerHighest;
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final Color bubbleColor = isOutgoing
+        ? (isDark ? scheme.primaryContainer : scheme.primary)
+        : scheme.surfaceContainerHighest;
     final Color textColor =
-        isOutgoing ? scheme.onPrimaryContainer : scheme.onSurface;
+        isOutgoing ? (isDark ? scheme.onPrimaryContainer : Colors.white) : scheme.onSurface;
     final Alignment alignment =
         isOutgoing ? Alignment.centerRight : Alignment.centerLeft;
 
@@ -66,11 +76,18 @@ class MessageTile extends StatelessWidget {
       alignment: alignment,
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        constraints: const BoxConstraints(maxWidth: 300),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        constraints: BoxConstraints(maxWidth: maxBubbleWidth),
         decoration: BoxDecoration(
           color: bubbleColor,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: <BoxShadow>[
+            BoxShadow(
+              color: Colors.black.withOpacity(isOutgoing ? 0.14 : 0.08),
+              blurRadius: 12,
+              offset: const Offset(0, 6),
+            ),
+          ],
         ),
         child: Column(
           crossAxisAlignment:
@@ -82,7 +99,7 @@ class MessageTile extends StatelessWidget {
                 Text(
                   formatTimestamp(message.timestamp),
                   style: TextStyle(
-                    color: textColor.withOpacity(0.7),
+                    color: textColor.withOpacity(0.75),
                     fontSize: 11,
                   ),
                 ),
@@ -112,7 +129,11 @@ class MessageTile extends StatelessWidget {
             const SizedBox(height: 4),
             Text(
               displayText,
-              style: TextStyle(color: textColor, fontSize: 15),
+              style: TextStyle(
+                color: textColor,
+                fontSize: 15.5,
+                height: 1.3,
+              ),
               softWrap: true,
             ),
             if (message.imageUrls.isNotEmpty) ...<Widget>[

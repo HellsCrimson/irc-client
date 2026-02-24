@@ -1124,83 +1124,103 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       activeChannel = _statusChannel;
     }
 
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final LinearGradient backgroundGradient = LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: isDark
+          ? const <Color>[
+              Color(0xFF0B1220),
+              Color(0xFF111827),
+              Color(0xFF0F172A),
+            ]
+          : const <Color>[
+              Color(0xFFF7FAFF),
+              Color(0xFFF1F5FF),
+              Color(0xFFF5F7FB),
+            ],
+    );
+
     return Scaffold(
       appBar: AppBar(
         title: Text(_currentTabIndex == 0 ? 'Chat' : 'Connection'),
       ),
-      body: SafeArea(
-        child: GestureDetector(
-          onTap: () => FocusScope.of(context).unfocus(),
-          behavior: HitTestBehavior.translucent,
-          child: _currentTabIndex == 0
-              ? ChatPage(
-                  isConnected: isConnected,
-                  statusLabel: _statusLabel(),
-                  statusColor: _statusColor(),
-                  statusChannel: _statusChannel,
-                  currentChannel: activeChannel,
-                  channels: _channels,
-                  visibleMessages:
-                      _channelMessages[activeChannel] ?? <ChatMessage>[],
-                  scrollController: _scrollController,
-                  messageController: _messageController,
-                  onChannelSelected: _handleChannelSelected,
-                  onSendMessage: _sendMessage,
-                  messageBuilder: _buildMessageTile,
-                )
-              : SettingsPage(
-                  isConnected: isConnected,
-                  isConnecting: isConnecting,
-                  ipController: _ipController,
-                  portController: _portController,
-                  nickController: _nickController,
-                  userController: _userController,
-                  realnameController: _realnameController,
-                  fingerprintController: _fingerprintController,
-                  useTls: _useTls,
-                  tlsMode: _tlsMode,
-                  debugEnabled: _debugEnabled,
-                  debugLines: _debugLines,
-                  showRawMessages: _showRawMessages,
-                  autoConnect: _autoConnect,
-                  themeMode: widget.themeMode,
-                  onConnect: _connect,
-                  onDisconnect: () => _disconnect(manual: true),
-                  onUseTlsChanged: (bool value) {
-                    setState(() {
-                      _useTls = value;
-                    });
-                  },
-                  onTlsModeChanged: (TlsMode? value) {
-                    if (value == null) {
-                      return;
-                    }
-                    setState(() {
-                      _tlsMode = value;
-                    });
-                  },
-                  onDebugChanged: (bool value) {
-                    setState(() {
-                      _debugEnabled = value;
-                    });
-                  },
-                  onShowRawMessagesChanged: (bool value) {
-                    setState(() {
-                      _showRawMessages = value;
-                    });
-                  },
-                  onThemeModeChanged: (ThemeMode? value) {
-                    if (value == null) {
-                      return;
-                    }
-                    widget.onThemeModeChanged(value);
-                  },
-                  onAutoConnectChanged: (bool value) {
-                    setState(() {
-                      _autoConnect = value;
-                    });
-                  },
-                ),
+      body: DecoratedBox(
+        decoration: BoxDecoration(gradient: backgroundGradient),
+        child: SafeArea(
+          child: GestureDetector(
+            onTap: () => FocusScope.of(context).unfocus(),
+            behavior: HitTestBehavior.translucent,
+            child: _currentTabIndex == 0
+                ? ChatPage(
+                    isConnected: isConnected,
+                    statusLabel: _statusLabel(),
+                    statusColor: _statusColor(),
+                    statusChannel: _statusChannel,
+                    currentChannel: activeChannel,
+                    channels: _channels,
+                    visibleMessages:
+                        _channelMessages[activeChannel] ?? <ChatMessage>[],
+                    scrollController: _scrollController,
+                    messageController: _messageController,
+                    onChannelSelected: _handleChannelSelected,
+                    onSendMessage: _sendMessage,
+                    messageBuilder: _buildMessageTile,
+                  )
+                : SettingsPage(
+                    isConnected: isConnected,
+                    isConnecting: isConnecting,
+                    ipController: _ipController,
+                    portController: _portController,
+                    nickController: _nickController,
+                    userController: _userController,
+                    realnameController: _realnameController,
+                    fingerprintController: _fingerprintController,
+                    useTls: _useTls,
+                    tlsMode: _tlsMode,
+                    debugEnabled: _debugEnabled,
+                    debugLines: _debugLines,
+                    showRawMessages: _showRawMessages,
+                    autoConnect: _autoConnect,
+                    themeMode: widget.themeMode,
+                    onConnect: _connect,
+                    onDisconnect: () => _disconnect(manual: true),
+                    onUseTlsChanged: (bool value) {
+                      setState(() {
+                        _useTls = value;
+                      });
+                    },
+                    onTlsModeChanged: (TlsMode? value) {
+                      if (value == null) {
+                        return;
+                      }
+                      setState(() {
+                        _tlsMode = value;
+                      });
+                    },
+                    onDebugChanged: (bool value) {
+                      setState(() {
+                        _debugEnabled = value;
+                      });
+                    },
+                    onShowRawMessagesChanged: (bool value) {
+                      setState(() {
+                        _showRawMessages = value;
+                      });
+                    },
+                    onThemeModeChanged: (ThemeMode? value) {
+                      if (value == null) {
+                        return;
+                      }
+                      widget.onThemeModeChanged(value);
+                    },
+                    onAutoConnectChanged: (bool value) {
+                      setState(() {
+                        _autoConnect = value;
+                      });
+                    },
+                  ),
+          ),
         ),
       ),
       bottomNavigationBar: BottomNavigationBar(
