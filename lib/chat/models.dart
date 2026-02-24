@@ -74,3 +74,13 @@ class ImageParseResult {
   final List<String> urls;
   final Map<String, String> aliases;
 }
+
+class ServerOutputEntry {
+  ServerOutputEntry({
+    required this.timestamp,
+    required this.text,
+  });
+
+  final DateTime timestamp;
+  final String text;
+}

@@ -153,7 +153,8 @@ class ChatPage extends StatelessWidget {
                 child: TextField(
                   controller: messageController,
                   decoration: const InputDecoration(
-                    labelText: 'Message (or /nick, /join, /part, /user, /msg)',
+                    labelText:
+                        'Message (or /nick, /join, /part, /user, /msg, /whois, /away, /names, /lusers, /stats, /admin, /info, /users)',
                     border: OutlineInputBorder(),
                   ),
                   enabled: isConnected,

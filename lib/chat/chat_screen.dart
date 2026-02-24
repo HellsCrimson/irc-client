@@ -14,6 +14,7 @@ import 'utils/time_utils.dart';
 import 'utils/tls_utils.dart';
 import 'widgets/chat_page.dart';
 import 'widgets/message_tile.dart';
+import 'widgets/server_output_page.dart';
 import 'widgets/settings_page.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -73,6 +74,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool _listRequestedManually = false;
   bool _registrationComplete = false;
   final List<String> _motdLines = <String>[];
+  final Map<String, List<String>> _namesBufferByChannel =
+      <String, List<String>>{};
+  final Map<String, List<String>> _whoisBufferByNick =
+      <String, List<String>>{};
+  final List<String> _infoLines = <String>[];
+  final List<String> _adminLines = <String>[];
+  final List<String> _statsLines = <String>[];
+  final List<String> _usersLines = <String>[];
+  final List<String> _lusersLines = <String>[];
+  final List<ServerOutputEntry> _serverOutput = <ServerOutputEntry>[];
   int _nextMessageId = 0;
   final Map<int, Set<String>> _loadedImageUrlsByMessageId =
       <int, Set<String>>{};
@@ -627,12 +638,182 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
     if (code == '376' || code == '422') {
       if (_motdLines.isNotEmpty) {
-        _addSystemMessage(
-          'MOTD:\n${_motdLines.join('\n')}',
-          channel: _statusChannel,
-        );
+        final String message = 'MOTD:\n${_motdLines.join('\n')}';
+        _addSystemMessage(message, channel: _statusChannel);
+        _addServerOutput(message);
         _motdLines.clear();
       }
+      return true;
+    }
+
+    if (code == '353') {
+      if (parsed.params.length >= 3) {
+        final String channel = parsed.params[2];
+        final String? namesChunk = parsed.trailing;
+        if (namesChunk != null && namesChunk.isNotEmpty) {
+          final List<String> bucket =
+              _namesBufferByChannel.putIfAbsent(channel, () => <String>[]);
+          bucket.addAll(namesChunk.split(' '));
+        }
+      }
+      return true;
+    }
+
+    if (code == '366') {
+      if (parsed.params.length >= 2) {
+        final String channel = parsed.params[1];
+        final List<String> names =
+            _namesBufferByChannel.remove(channel) ?? <String>[];
+        if (names.isNotEmpty) {
+          final String message =
+              'Names in $channel (${names.length}):\n${names.join(' ')}';
+          _addSystemMessage(
+            message,
+            channel: _statusChannel,
+          );
+          _addServerOutput(message);
+        } else {
+          final String message = 'Names in $channel: none';
+          _addSystemMessage(message, channel: _statusChannel);
+          _addServerOutput(message);
+        }
+        return true;
+      }
+    }
+
+    if (code == '311' || code == '312' || code == '313' || code == '317') {
+      if (parsed.params.length >= 2) {
+        final String nick = parsed.params[1];
+        final List<String> bucket =
+            _whoisBufferByNick.putIfAbsent(nick, () => <String>[]);
+        switch (code) {
+          case '311':
+            if (parsed.params.length >= 5) {
+              final String user = parsed.params[2];
+              final String host = parsed.params[3];
+              final String realname = parsed.trailing ?? '';
+              bucket.add('$nick is $user@$host $realname'.trim());
+            }
+            break;
+          case '312':
+            final String server = parsed.params.length >= 3
+                ? parsed.params[2]
+                : 'server';
+            final String info = parsed.trailing ?? '';
+            bucket.add('Server: $server ${info.isEmpty ? '' : '- $info'}'.trim());
+            break;
+          case '313':
+            bucket.add('Operator status');
+            break;
+          case '317':
+            if (parsed.params.length >= 4) {
+              final String idleSeconds = parsed.params[2];
+              final String signon = parsed.params[3];
+              bucket.add('Idle: ${idleSeconds}s, Signon: $signon');
+            }
+            break;
+        }
+        return true;
+      }
+    }
+
+    if (code == '319') {
+      if (parsed.params.length >= 2) {
+        final String nick = parsed.params[1];
+        final List<String> bucket =
+            _whoisBufferByNick.putIfAbsent(nick, () => <String>[]);
+        final String channels = parsed.trailing ?? '';
+        if (channels.isNotEmpty) {
+          bucket.add('Channels: $channels');
+        }
+        return true;
+      }
+    }
+
+    if (code == '318') {
+      if (parsed.params.length >= 2) {
+        final String nick = parsed.params[1];
+        final List<String> bucket =
+            _whoisBufferByNick.remove(nick) ?? <String>[];
+        if (bucket.isNotEmpty) {
+          final String message = 'WHOIS $nick:\n${bucket.join('\n')}';
+          _addSystemMessage(message, channel: _statusChannel);
+          _addServerOutput(message);
+        } else {
+          final String message = 'WHOIS $nick complete.';
+          _addSystemMessage(message, channel: _statusChannel);
+          _addServerOutput(message);
+        }
+        return true;
+      }
+    }
+
+    if (code == '251' ||
+        code == '252' ||
+        code == '253' ||
+        code == '254' ||
+        code == '255' ||
+        code == '265' ||
+        code == '266') {
+      if (parsed.trailing != null && parsed.trailing!.isNotEmpty) {
+        _lusersLines.add(parsed.trailing!);
+      }
+      if (code == '255' || code == '266') {
+        _emitServerBlock('LUSERS', _lusersLines);
+        _lusersLines.clear();
+      }
+      return true;
+    }
+
+    if (code == '212' || code == '210' || code == '249') {
+      if (parsed.trailing != null && parsed.trailing!.isNotEmpty) {
+        _statsLines.add(parsed.trailing!);
+        return true;
+      }
+    }
+
+    if (code == '219') {
+      _emitServerBlock('STATS', _statsLines);
+      _statsLines.clear();
+      return true;
+    }
+
+    if (code == '256' || code == '257' || code == '258') {
+      if (parsed.trailing != null && parsed.trailing!.isNotEmpty) {
+        _adminLines.add(parsed.trailing!);
+        return true;
+      }
+    }
+
+    if (code == '259') {
+      _emitServerBlock('ADMIN', _adminLines);
+      _adminLines.clear();
+      return true;
+    }
+
+    if (code == '371') {
+      if (parsed.trailing != null && parsed.trailing!.isNotEmpty) {
+        _infoLines.add(parsed.trailing!);
+        return true;
+      }
+    }
+
+    if (code == '374') {
+      _emitServerBlock('INFO', _infoLines);
+      _infoLines.clear();
+      return true;
+    }
+
+    if (code == '392' || code == '393' || code == '394') {
+      if (parsed.trailing != null && parsed.trailing!.isNotEmpty) {
+        _usersLines.add(parsed.trailing!);
+        return true;
+      }
+    }
+
+    if (code == '395') {
+      _emitServerBlock('USERS', _usersLines);
+      _usersLines.clear();
       return true;
     }
 
@@ -669,6 +850,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _listRequestedManually = false;
     _registrationComplete = false;
     _motdLines.clear();
+    _namesBufferByChannel.clear();
+    _whoisBufferByNick.clear();
+    _infoLines.clear();
+    _adminLines.clear();
+    _statsLines.clear();
+    _usersLines.clear();
+    _lusersLines.clear();
+    _serverOutput.clear();
     _loadedImageUrlsByMessageId.clear();
     _imageUrlAliasesByMessageId.clear();
     if (mounted) {
@@ -874,6 +1063,82 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             : username;
         _sendRawLine('USER $username 0 * :$realname');
         return true;
+      case 'whois':
+        if (args.isEmpty) {
+          _showError('Usage: /whois <nick>');
+          return true;
+        }
+        _sendRawLine('WHOIS $args');
+        _addSystemMessage('WHOIS requested for $args');
+        return true;
+      case 'away':
+        if (args.isEmpty) {
+          _sendRawLine('AWAY');
+          _addSystemMessage('Away status cleared.');
+          return true;
+        }
+        _sendRawLine('AWAY :$args');
+        _addSystemMessage('Away status set.');
+        return true;
+      case 'names':
+        if (args.isEmpty) {
+          if (_currentChannel.isEmpty || _currentChannel == _statusChannel) {
+            _showError('Usage: /names <#channel>');
+            return true;
+          }
+          _sendRawLine('NAMES $_currentChannel');
+          _addSystemMessage('Names requested for $_currentChannel');
+          return true;
+        }
+        _sendRawLine('NAMES $args');
+        _addSystemMessage('Names requested for $args');
+        return true;
+      case 'luser':
+      case 'lusers':
+        if (args.isEmpty) {
+          _sendRawLine('LUSERS');
+          _addSystemMessage('User stats requested.');
+          return true;
+        }
+        _sendRawLine('LUSERS $args');
+        _addSystemMessage('User stats requested for $args.');
+        return true;
+      case 'stats':
+        if (args.isEmpty) {
+          _sendRawLine('STATS');
+          _addSystemMessage('Server stats requested.');
+          return true;
+        }
+        _sendRawLine('STATS $args');
+        _addSystemMessage('Server stats requested: $args');
+        return true;
+      case 'admin':
+        if (args.isEmpty) {
+          _sendRawLine('ADMIN');
+          _addSystemMessage('Admin info requested.');
+          return true;
+        }
+        _sendRawLine('ADMIN $args');
+        _addSystemMessage('Admin info requested for $args.');
+        return true;
+      case 'info':
+        if (args.isEmpty) {
+          _sendRawLine('INFO');
+          _addSystemMessage('Server info requested.');
+          return true;
+        }
+        _sendRawLine('INFO $args');
+        _addSystemMessage('Server info requested for $args.');
+        return true;
+      case 'users':
+        if (args.isEmpty) {
+          _sendRawLine('USERS');
+          _addSystemMessage('Users list requested.');
+          return true;
+        }
+        _sendRawLine('USERS $args');
+        _addSystemMessage('Users list requested for $args.');
+        return true;
       default:
         _showError('Unknown command: /$command');
         return true;
@@ -930,6 +1195,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
+  void _addServerOutput(String text) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _serverOutput.add(
+        ServerOutputEntry(timestamp: DateTime.now(), text: text),
+      );
+      if (_serverOutput.length > 200) {
+        _serverOutput.removeAt(0);
+      }
+    });
+  }
+
   void _addDebug(String line) {
     if (!_debugEnabled) {
       return;
@@ -941,6 +1220,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         _debugLines.removeAt(0);
       }
     });
+  }
+
+  void _emitServerBlock(String title, List<String> lines) {
+    if (lines.isEmpty) {
+      final String message = '$title complete.';
+      _addSystemMessage(message, channel: _statusChannel);
+      _addServerOutput(message);
+      return;
+    }
+    final String message = '$title:\n${lines.join('\n')}';
+    _addSystemMessage(message, channel: _statusChannel);
+    _addServerOutput(message);
   }
 
   void _scrollToBottom() {
@@ -1143,7 +1434,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_currentTabIndex == 0 ? 'Chat' : 'Connection'),
+        title: Text(
+          _currentTabIndex == 0
+              ? 'Chat'
+              : _currentTabIndex == 1
+                  ? 'Connection'
+                  : 'Server',
+        ),
       ),
       body: DecoratedBox(
         decoration: BoxDecoration(gradient: backgroundGradient),
@@ -1151,75 +1448,77 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           child: GestureDetector(
             onTap: () => FocusScope.of(context).unfocus(),
             behavior: HitTestBehavior.translucent,
-            child: _currentTabIndex == 0
-                ? ChatPage(
-                    isConnected: isConnected,
-                    statusLabel: _statusLabel(),
-                    statusColor: _statusColor(),
-                    statusChannel: _statusChannel,
-                    currentChannel: activeChannel,
-                    channels: _channels,
-                    visibleMessages:
-                        _channelMessages[activeChannel] ?? <ChatMessage>[],
-                    scrollController: _scrollController,
-                    messageController: _messageController,
-                    onChannelSelected: _handleChannelSelected,
-                    onSendMessage: _sendMessage,
-                    messageBuilder: _buildMessageTile,
-                  )
-                : SettingsPage(
-                    isConnected: isConnected,
-                    isConnecting: isConnecting,
-                    ipController: _ipController,
-                    portController: _portController,
-                    nickController: _nickController,
-                    userController: _userController,
-                    realnameController: _realnameController,
-                    fingerprintController: _fingerprintController,
-                    useTls: _useTls,
-                    tlsMode: _tlsMode,
-                    debugEnabled: _debugEnabled,
-                    debugLines: _debugLines,
-                    showRawMessages: _showRawMessages,
-                    autoConnect: _autoConnect,
-                    themeMode: widget.themeMode,
-                    onConnect: _connect,
-                    onDisconnect: () => _disconnect(manual: true),
-                    onUseTlsChanged: (bool value) {
-                      setState(() {
-                        _useTls = value;
-                      });
-                    },
-                    onTlsModeChanged: (TlsMode? value) {
-                      if (value == null) {
-                        return;
-                      }
-                      setState(() {
-                        _tlsMode = value;
-                      });
-                    },
-                    onDebugChanged: (bool value) {
-                      setState(() {
-                        _debugEnabled = value;
-                      });
-                    },
-                    onShowRawMessagesChanged: (bool value) {
-                      setState(() {
-                        _showRawMessages = value;
-                      });
-                    },
-                    onThemeModeChanged: (ThemeMode? value) {
-                      if (value == null) {
-                        return;
-                      }
-                      widget.onThemeModeChanged(value);
-                    },
-                    onAutoConnectChanged: (bool value) {
-                      setState(() {
-                        _autoConnect = value;
-                      });
-                    },
-                  ),
+            child: switch (_currentTabIndex) {
+              0 => ChatPage(
+                  isConnected: isConnected,
+                  statusLabel: _statusLabel(),
+                  statusColor: _statusColor(),
+                  statusChannel: _statusChannel,
+                  currentChannel: activeChannel,
+                  channels: _channels,
+                  visibleMessages:
+                      _channelMessages[activeChannel] ?? <ChatMessage>[],
+                  scrollController: _scrollController,
+                  messageController: _messageController,
+                  onChannelSelected: _handleChannelSelected,
+                  onSendMessage: _sendMessage,
+                  messageBuilder: _buildMessageTile,
+                ),
+              1 => SettingsPage(
+                  isConnected: isConnected,
+                  isConnecting: isConnecting,
+                  ipController: _ipController,
+                  portController: _portController,
+                  nickController: _nickController,
+                  userController: _userController,
+                  realnameController: _realnameController,
+                  fingerprintController: _fingerprintController,
+                  useTls: _useTls,
+                  tlsMode: _tlsMode,
+                  debugEnabled: _debugEnabled,
+                  debugLines: _debugLines,
+                  showRawMessages: _showRawMessages,
+                  autoConnect: _autoConnect,
+                  themeMode: widget.themeMode,
+                  onConnect: _connect,
+                  onDisconnect: () => _disconnect(manual: true),
+                  onUseTlsChanged: (bool value) {
+                    setState(() {
+                      _useTls = value;
+                    });
+                  },
+                  onTlsModeChanged: (TlsMode? value) {
+                    if (value == null) {
+                      return;
+                    }
+                    setState(() {
+                      _tlsMode = value;
+                    });
+                  },
+                  onDebugChanged: (bool value) {
+                    setState(() {
+                      _debugEnabled = value;
+                    });
+                  },
+                  onShowRawMessagesChanged: (bool value) {
+                    setState(() {
+                      _showRawMessages = value;
+                    });
+                  },
+                  onThemeModeChanged: (ThemeMode? value) {
+                    if (value == null) {
+                      return;
+                    }
+                    widget.onThemeModeChanged(value);
+                  },
+                  onAutoConnectChanged: (bool value) {
+                    setState(() {
+                      _autoConnect = value;
+                    });
+                  },
+                ),
+              _ => ServerOutputPage(entries: _serverOutput),
+            },
           ),
         ),
       ),
@@ -1238,6 +1537,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           BottomNavigationBarItem(
             icon: Icon(Icons.settings_outlined),
             label: 'Connection',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.dns_outlined),
+            label: 'Server',
           ),
         ],
       ),
