@@ -32,6 +32,22 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
+  static const List<String> _commandSuggestions = <String>[
+    '/nick',
+    '/join',
+    '/part',
+    '/user',
+    '/msg',
+    '/whois',
+    '/away',
+    '/names',
+    '/list',
+    '/lusers',
+    '/stats',
+    '/admin',
+    '/info',
+    '/users',
+  ];
   static const String _statusChannel = '_status';
   static const _prefKeyIp = 'last_ip';
   static const _prefKeyPort = 'last_port';
@@ -47,6 +63,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final TextEditingController _ipController = TextEditingController();
   final TextEditingController _portController = TextEditingController();
   final TextEditingController _messageController = TextEditingController();
+  final FocusNode _messageFocusNode = FocusNode();
   final TextEditingController _fingerprintController =
       TextEditingController();
   final TextEditingController _nickController = TextEditingController();
@@ -114,9 +131,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _nickController.dispose();
     _userController.dispose();
     _realnameController.dispose();
+    _messageFocusNode.dispose();
     _scrollController.dispose();
     super.dispose();
   }
+
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -1446,7 +1465,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         decoration: BoxDecoration(gradient: backgroundGradient),
         child: SafeArea(
           child: GestureDetector(
-            onTap: () => FocusScope.of(context).unfocus(),
+            onTap: () {
+              if (_messageController.text.startsWith('/')) {
+                return;
+              }
+              FocusScope.of(context).unfocus();
+            },
             behavior: HitTestBehavior.translucent,
             child: switch (_currentTabIndex) {
               0 => ChatPage(
@@ -1460,6 +1484,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       _channelMessages[activeChannel] ?? <ChatMessage>[],
                   scrollController: _scrollController,
                   messageController: _messageController,
+                  messageFocusNode: _messageFocusNode,
+                  commandSuggestions: _commandSuggestions,
                   onChannelSelected: _handleChannelSelected,
                   onSendMessage: _sendMessage,
                   messageBuilder: _buildMessageTile,

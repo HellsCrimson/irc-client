@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models.dart';
+import 'command_suggestions.dart';
 
 class ChatPage extends StatelessWidget {
   const ChatPage({
@@ -14,6 +15,8 @@ class ChatPage extends StatelessWidget {
     required this.visibleMessages,
     required this.scrollController,
     required this.messageController,
+    required this.messageFocusNode,
+    required this.commandSuggestions,
     required this.onChannelSelected,
     required this.onSendMessage,
     required this.messageBuilder,
@@ -28,6 +31,8 @@ class ChatPage extends StatelessWidget {
   final List<ChatMessage> visibleMessages;
   final ScrollController scrollController;
   final TextEditingController messageController;
+  final FocusNode messageFocusNode;
+  final List<String> commandSuggestions;
   final ValueChanged<String> onChannelSelected;
   final VoidCallback onSendMessage;
   final Widget Function(ChatMessage message) messageBuilder;
@@ -145,6 +150,11 @@ class ChatPage extends StatelessWidget {
                 ),
         ),
         const Divider(height: 1),
+        CommandSuggestions(
+          messageController: messageController,
+          commandSuggestions: commandSuggestions,
+          focusNode: messageFocusNode,
+        ),
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
           child: Row(
@@ -152,6 +162,7 @@ class ChatPage extends StatelessWidget {
               Expanded(
                 child: TextField(
                   controller: messageController,
+                  focusNode: messageFocusNode,
                   decoration: const InputDecoration(
                     labelText:
                         'Message (or /nick, /join, /part, /user, /msg, /whois, /away, /names, /lusers, /stats, /admin, /info, /users)',
